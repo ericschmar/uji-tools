@@ -33,6 +33,15 @@ Choose keys that do not conflict with your existing bindings; explicit mappings 
 
 ## Workflow
 
+Goal management is opt-in. Ordinary conversations receive no goal instructions,
+and the agent cannot create a goal just because a task looks complex. Start
+`/goals <topic>` or `/sisyphus <topic>` to authorize drafting and one subsequent
+`goal_set` after confirmation, or use `/goal-set` / `/sisyphus-set` to start directly.
+Clearing the draft or changing sessions revokes that authorization. Existing goals
+remain stored, but reading or restoring them does not enter goal mode; use
+`/goal-resume` to explicitly continue work. Completed and paused goals do not
+inject instructions into unrelated turns.
+
 - `/goals <topic>` — discuss an objective, success criteria, boundaries and constraints before creating a goal.
 - `/sisyphus <topic>` — draft a goal that follows an ordered plan. Its mode is retained when the agent creates the goal.
 - `/goal-set <objective>` — create a goal and start work immediately.
@@ -72,7 +81,7 @@ Interruption behavior was verified against uji tag `v0.2.3`, `lua/uji/core/agent
 ## Agent tools
 
 - `goal_get({mode = "focused" | "all"})` — inspect focused goal or list retained goals.
-- `goal_set({objective, sisyphus?, auto_continue?, verification_contract?, tasks?})` — create and focus a goal.
+- `goal_set({objective, sisyphus?, auto_continue?, verification_contract?, tasks?})` — create and focus a goal after user-authorized `/goals` or `/sisyphus` drafting; otherwise rejected.
 - `goal_update({action, ...})` — `complete`, `pause`, `resume`, `abort` or `tweak`.
   - Complete requires `completion_summary`; a goal contract also requires `verification_summary`.
   - Pause/abort require `reason`; pause optionally accepts `suggested_action`.

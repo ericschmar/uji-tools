@@ -36,6 +36,16 @@ local function run_command(name, args)
   command.commands:get(name).handler(args or "")
   uji.sleep(0.05)
 end
+local function authorize()
+  local submit = uji.session.submit
+  uji.session.submit = function() end
+  run_command("goals", "Explicit test goal")
+  uji.session.submit = submit
+end
+local function create_goal(args)
+  authorize()
+  return success("goal_set", args)
+end
 local function roundtrip()
   local result, err
   Store.open(uji.session.info().directory, function(value, failure) result, err = value, failure end)
@@ -44,12 +54,19 @@ local function roundtrip()
   return result
 end
 
+local goal_context = require("uji.core.context").functions:get("goal")
+assert(goal_context() == nil, "ordinary work must not inject goal instructions")
+assert(call("goal_set", { objective = "Unrequested goal" }):find("error:", 1, true),
+  "agent-created goals must require explicit opt-in")
 success("goal_get")
+assert(goal_context() == nil, "reading state must not opt into goal work")
 assert(not plugin.runner.status().enabled)
-local text = success("goal_set", { objective = "Ship the native plugin", verification_contract = "Tests pass", tasks = {
+local text = create_goal({ objective = "Ship the native plugin", verification_contract = "Tests pass", tasks = {
   { id = "parent", title = "Implement", subtasks = { { id = "child", title = "Test", verification_contract = "Run tests" } } },
 } })
 assert(goal().id:match("^%x+$") and #goal().id == 24, "safe goal IDs")
+assert(goal_context() and goal_context().text:find("explicitly requested", 1, true), "opted-in goal context is available")
+assert(call("goal_set", { objective = "Unrequested replacement" }):find("error:", 1, true), "creation opt-in is single-use")
 local id = goal().id
 assert(text:find(id, 1, true) and text:find("child", 1, true), "details must include goal and task IDs")
 assert(call("complete_task", { task_id = "parent" }):find("error:", 1, true))
@@ -59,6 +76,7 @@ success("complete_task", { task_id = "parent" })
 assert(call("goal_update", { action = "complete", completion_summary = "Implemented" }):find("error:", 1, true))
 success("goal_update", { action = "complete", completion_summary = "Implemented", verification_summary = "Tests pass" })
 assert(goal().status == "complete" and not goal().archived_at)
+assert(goal_context() == nil, "completed goals must not inject instructions into ordinary work")
 assert(not plugin.runner.status().enabled)
 assert(success("goal_list"):find(id, 1, true), "completed goals stay visible")
 assert(roundtrip().goals[id].status == "complete", "completion persists")
@@ -67,7 +85,7 @@ success("goal_archive")
 assert(not success("goal_list"):find(id, 1, true), "archived goals must be hidden")
 assert(roundtrip().goals[id].archived_at, "archive retains history")
 
-success("goal_set", { objective = "Original", auto_continue = false })
+create_goal({ objective = "Original", auto_continue = false })
 local original = goal().objective
 assert(call("goal_update", { action = "tweak", new_objective = "Unauthorized", change_summary = "test" }):find("error:", 1, true))
 assert(goal().objective == original)
@@ -79,6 +97,7 @@ assert(goal().objective == "Authorized" and goal().revisions[1].objective == "Or
 assert(call("goal_update", { action = "tweak", new_objective = "Again", change_summary = "test" }):find("error:", 1, true))
 uji.session.submit = submit
 
+authorize()
 local old = plugin.state()
 local write = uji.data.write
 uji.data.write = function(_, _, callback) callback(nil, "injected write failure") end
@@ -86,7 +105,7 @@ assert(call("goal_set", { objective = "Must not persist" }):find("injected write
 assert(plugin.state().focused_id == old.focused_id, "write failure must not accept in-memory changes")
 uji.data.write = write
 
-success("goal_set", { objective = "Bounded continuation" })
+create_goal({ objective = "Bounded continuation" })
 local finished = 0
 event.on("turn_finished", function() finished = finished + 1 end, { name = "goal-test-finished", priority = 1 })
 app.agent:submit("Begin a model-free test turn")
@@ -103,10 +122,12 @@ local count = finished
 uji.sleep(0.2)
 assert(finished == count and not app.agent:working(), "interrupt must not restart execution")
 
-success("goal_set", { objective = "Restored goal" })
+create_goal({ objective = "Restored goal" })
 event.emit("session_resumed", { session_id = parent.id })
 success("goal_get")
 assert(goal().objective == "Restored goal" and not plugin.runner.status().enabled, "restoration does not arm continuation")
+assert(goal_context() == nil, "restoring a goal must not opt into goal work")
+assert(call("goal_set", { objective = "Restored authorization" }):find("error:", 1, true), "restoring a session must not authorize creation")
 
 local filename = Store.filename(uji.session.info().directory)
 local good = uji.data.read(filename)
@@ -123,6 +144,7 @@ assert(call("goal_get"):find("error:", 1, true), "invalid settings cannot wedge 
 uji.data.write(filename, good)
 success("goal_get")
 assert(Store.filename("/another/project") ~= filename, "project directories must have separate records")
+authorize()
 local held_write
 local native_write = uji.data.write
 uji.data.write = function(name, contents, callback)
@@ -141,6 +163,7 @@ held_write()
 uji.sleep(0.05)
 assert(cancelled_result == nil and not plugin.runner.status().enabled, "cancelled write must not arm execution")
 
+authorize()
 held_write = nil
 uji.data.write = function(name, contents, callback)
   native_write(name, contents, function(ok, err) held_write = function() callback(ok, err) end end)
@@ -176,6 +199,18 @@ uji.session.submit = function() end
 run_command("sisyphus", "Follow the ordered plan")
 success("goal_set", { objective = "Drafted ordered goal" })
 assert(goal().sisyphus, "Sisyphus drafting mode must survive commitment without an optional flag")
+run_command("goals", "Cancelled draft")
+run_command("goal-clear")
+assert(goal_context() == nil, "cancelling drafting must leave goal mode")
+assert(call("goal_set", { objective = "Cancelled opt-in" }):find("error:", 1, true), "clearing a draft revokes creation opt-in")
+run_command("goal-set", "Direct opt-in")
+assert(goal().objective == "Direct opt-in" and goal_context(), "direct goal command must remain available")
+run_command("sisyphus-set", "Direct ordered opt-in")
+assert(goal().sisyphus and goal().objective == "Direct ordered opt-in", "direct Sisyphus command must remain available")
+run_command("goal-pause")
+assert(goal_context() == nil, "paused goals must not inject instructions")
+run_command("goal-resume")
+assert(goal_context(), "explicit resume must re-enter goal mode")
 plugin.runner.stop()
 uji.session.submit = native_submit
 local overlay = UI.show("Native goal view", UI.detail(goal()))

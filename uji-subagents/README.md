@@ -13,7 +13,8 @@ agent mid-turn from the UI.
 ## Install
 
 ```lua
-uji.pack.add({ "ericschmar/uji-subagents" })
+uji.pack.add({ "ericschmar/uji-tools" })
+require("uji_tools").setup()
 
 local subagents = require("managed_subagent")
 subagents.setup({})

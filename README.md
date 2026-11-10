@@ -10,34 +10,79 @@ Each project keeps its own source, dependencies, tests, and documentation.
 - [uji-spec-graph](uji-spec-graph/README.md): spec navigation and editing tools, plus a spec-writing skill.
 - [pocketbase-mcp](pocketbase-mcp/README.md): a PocketBase MCP server.
 
-## Local uji setup
+## Install as a uji pack
 
-Clone this repository to `~/develop/uji-tools`, then add the plugin directories
-alongside your existing packs in `~/.config/uji/init.lua`:
+Add the GitHub repository alongside your existing packs in
+`~/.config/uji/init.lua`. uji installs it into its managed pack directory; no
+manual clone or fixed checkout location is needed:
 
 ```lua
-uji.pack.add({
-    "uji-labs/uji-plugins",
-    { dir = "~/develop/uji-tools/uji-subagents" },
-    { dir = "~/develop/uji-tools/uji-goal" },
-    { dir = "~/develop/uji-tools/uji-spec-graph" },
-})
+uji.pack.add({ "uji-labs/uji-plugins", "ericschmar/uji-tools" })
+local tools = require("uji_tools").setup()
+
+require("goal").setup({ max_auto_turns = 10 })
+require("spec_graph").setup({})
+require("managed_subagent").setup({ concurrency = 2 })
 ```
 
-Keep each plugin's existing setup call. Add
-`~/develop/uji-tools/uji-spec-graph/skills` to the roots of your existing skills
-setup. See the individual READMEs for dependencies and configuration.
+The collection's `setup()` makes the three bundled Lua packs available; it does
+not enable them, change your theme, or start an MCP server. Keep each plugin's
+setup call and options in your config. See the individual READMEs for details,
+including the subagent theme wrapper.
 
-The repository root is a collection, not a single uji pack: load the three
-plugin subdirectories rather than registering the root as a pack.
+`/sync` updates the repository through uji's pack manager. Run `/reload` after
+changing your config. A remote installation only includes committed and pushed
+changes; use the local development option below to test unpublished edits.
 
-Build PocketBase's MCP server in `pocketbase-mcp/` and point your MCP configuration
-at that directory's `build/index.js`. Supply credentials locally through the
-environment; do not commit credentials or your personal uji configuration.
+### Skills and resource paths
 
-Run `/reload` after changing your uji configuration.
+`tools.path(relative)` resolves a resource inside the installed pack, regardless
+of whether uji cloned it or you use a local checkout. Add this entry to the roots
+of your existing `require("skills").setup(...)` call:
+
+```lua
+tools.path("uji-spec-graph/skills")
+```
+
+Point your existing PocketBase MCP server configuration at:
+
+```lua
+cmd = { "node", tools.path("pocketbase-mcp/build/index.js") }
+```
+
+Supply PocketBase credentials through the environment. Do not commit credentials
+or your personal uji configuration.
+
+### Runtime dependencies
+
+Pack installation clones source; it does not run dependency installers or builds.
+Bun is required for spec-graph. In the directory returned by
+`tools.path("uji-spec-graph")`, run `bun install --frozen-lockfile` before using
+its tools. The generated `tools.json` manifest is already tracked.
+
+For PocketBase, install its dependencies and build the server in the directory
+returned by `tools.path("pocketbase-mcp")`, following that project's README.
+Its `build/index.js` is generated and is not shipped in Git. Reinstall dependencies
+or rebuild after updates that require it. Goal and subagents need no separate
+JavaScript dependency installation.
+
+### Local development
+
+To use this working copy instead of the GitHub version, replace the repository
+entry with its local directory, keeping the same setup and resource-path calls:
+
+```lua
+uji.pack.add({ "uji-labs/uji-plugins", { dir = "~/develop/uji-tools" } })
+local tools = require("uji_tools").setup()
+```
+
+The child packs can still be loaded individually through their local directories.
+Do not load a local and remote copy of the collection together.
 
 ## Checks
+
+Run `python3 tests/check.py` from the repository root to verify pack loading from
+an arbitrary checkout location without a model call or network installation.
 
 Run checks from each project's own directory:
 

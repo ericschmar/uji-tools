@@ -18,6 +18,8 @@ Goals are scoped to the session directory. Completed goals remain available unti
 
 ## Invariants
 
+- Goal creation is opt-in: the agent's `goal_set` requires a session-local user-initiated `/goals` or `/sisyphus` draft. Successful creation consumes that authorization; clearing the draft or changing sessions revokes it. Direct user `/goal-set` and `/sisyphus-set` commands remain available.
+- Ordinary turns receive no goal context. Reading/restoring state or selecting a goal never opts into work; explicit creation or `/goal-resume` does. Drafting and tweak flows supply their own context. Paused, completed and archived goals do not inject work instructions.
 - Invalid mutations and storage failures never change the accepted in-memory state.
 - Corrupt persisted state is surfaced, never replaced by an empty pool.
 - Completed or archived goals cannot continue executing or accept task mutations.

@@ -26,6 +26,7 @@ function M.setup(opts)
   local limit = opts.max_auto_turns or 10
   assert(type(limit) == "number" and limit >= 0 and limit % 1 == 0, "max_auto_turns must be a nonnegative integer")
   local state, directory, draft, tweak, runner, toolbar
+  local engaged = false
   local busy, queue = false, {}
   local generation, active_request = 0, nil
   local function focused()
@@ -63,7 +64,7 @@ function M.setup(opts)
       local current_directory = uji.session.info().directory
       if directory ~= current_directory then
         if runner then runner.stop() end
-        state, draft, tweak = nil, nil, nil
+        state, draft, tweak, engaged = nil, nil, nil, false
         directory = current_directory
       end
       if not state then
@@ -110,11 +111,13 @@ function M.setup(opts)
     if uji.session.state() == "idle" then uji.session.submit(text) end
   end
   local function halt()
+    engaged = false
     runner.stop()
     if uji.session.state() == "working" then uji.session.interrupt() end
   end
   local function arm(goal)
     runner.stop()
+    engaged = true
     if goal.auto_continue ~= false and state.settings.auto_continue ~= false then runner.start(goal.id) end
   end
   local function create(args, done, start_turn)
@@ -128,7 +131,7 @@ function M.setup(opts)
     local next_state = copy(state)
     next_state.goals[goal.id], next_state.focused_id = goal, goal.id
     save(next_state, done, UI.detail(goal), function()
-      draft, tweak = nil, nil
+      draft, tweak, engaged = nil, nil, true
       arm(goal)
       if start_turn then submit("Work on the focused goal. Follow its objective and verification requirements.") end
     end)
@@ -158,7 +161,7 @@ function M.setup(opts)
     if not changed then done(error_text(err)); return end
     commit(changed, done, nil, function()
       if args.action == "tweak" then tweak = nil end
-      if changed.status ~= "active" then runner.stop() end
+      if changed.status ~= "active" then runner.stop(); engaged = false end
       if user_action and args.action == "resume" then
         arm(changed)
         submit("Resume work on the focused goal.")
@@ -197,10 +200,13 @@ function M.setup(opts)
     done(args.mode == "all" and UI.list(s) or UI.detail(focused()))
   end)
   tool("goal_list", "List non-archived goals, including completed goals retained for review.", {}, {}, function(_, s, done) done(UI.list(s)) end)
-  tool("goal_set", "Create and focus a persistent goal. Objective, criteria, boundaries and constraints should be explicit.", {
+  tool("goal_set", "Create and focus a persistent goal only after the user starts /goals or /sisyphus and confirms it. Never use for ordinary work or create goals automatically.", {
     objective = string_field, sisyphus = { type = "boolean" }, auto_continue = { type = "boolean" },
     verification_contract = string_field, tasks = task_schema,
-  }, { "objective" }, function(args, _, done) create(args, done, false) end)
+  }, { "objective" }, function(args, _, done)
+    if not draft then done(error_text("goal creation requires user opt-in through /goals or /sisyphus")); return end
+    create(args, done, false)
+  end)
   tool("goal_update", "Complete, pause, resume, abort or explicitly tweak the focused goal. Evidence checks are not an independent audit.", {
     action = { type = "string", enum = { "complete", "pause", "resume", "abort", "tweak" } },
     reason = string_field, suggested_action = string_field, completion_summary = string_field,
@@ -211,7 +217,7 @@ function M.setup(opts)
     if not goal or goal.archived_at then done(error_text("goal not found")); return end
     local next_state = copy(s)
     next_state.focused_id = goal.id
-    save(next_state, done, UI.detail(goal), function() runner.stop(); draft, tweak = nil, nil end)
+    save(next_state, done, UI.detail(goal), function() runner.stop(); draft, tweak, engaged = nil, nil, false end)
   end)
   tool("goal_archive", "Archive a goal without deleting its history.", { goal_id = string_field }, {}, function(args, s, done)
     local id = args.goal_id or s.focused_id
@@ -280,7 +286,7 @@ function M.setup(opts)
         if not goal or goal.archived_at then finish(error_text("goal no longer available")); return end
         local next_state = copy(current)
         next_state.focused_id = id
-        save(next_state, finish, UI.detail(goal), function() runner.stop(); draft, tweak = nil, nil end)
+        save(next_state, finish, UI.detail(goal), function() runner.stop(); draft, tweak, engaged = nil, nil, false end)
       end)
     end)
   end
@@ -319,10 +325,11 @@ function M.setup(opts)
   end)
 
   uji.context.add("goal", function()
-    local lines = { "Use goal_get to inspect persistent goals. Goal tools manage objectives and tasks. Evidence checks are not an independent audit." }
-    if not state or directory ~= uji.session.info().directory then
-      lines[#lines + 1] = "Goal state is not loaded. Call goal_get before working on a persistent goal."
-    elseif draft then
+    if not state or directory ~= uji.session.info().directory then return end
+    local goal = focused()
+    if not draft and not tweak and not (engaged and goal and goal.status == "active" and not goal.archived_at) then return end
+    local lines = { "Goal mode was explicitly requested by the user. Goal tools manage this objective and its tasks. Evidence checks are not an independent audit. Do not create additional goals without /goals or /sisyphus." }
+    if draft then
       lines[#lines + 1] = "GOAL DRAFTING: clarify objective, success criteria, boundaries, constraints and blocking conditions. Read-only research is allowed; do not implement yet. Confirm the goal with the user before goal_set."
       lines[#lines + 1] = "Drafting data: " .. uji.json.encode(draft)
     elseif tweak then
@@ -336,14 +343,14 @@ function M.setup(opts)
         lines[#lines + 1] = "Work toward the focused goal. Resolve subtasks before parents. Supply evidence for verification contracts. Complete using goal_update with a completion_summary and verification_summary. Pause with a reason when blocked; never fake completion."
         if goal.sisyphus then lines[#lines + 1] = "SISYPHUS: follow the user's ordered steps; pause when unclear. Do not invent preflight work. Necessary safety checks still apply." end
       else lines[#lines + 1] = "This goal is not active. Do not automatically resume it or continue its work." end
-    else lines[#lines + 1] = "No goal is focused. Do not create one unless the user's request warrants it." end
+    end
     return { text = table.concat(lines, "\n\n"), at = "turn" }
   end)
   for _, event in ipairs({ "session_created", "session_resumed" }) do
     uji.on(event, function()
       generation = generation + 1
       runner.stop()
-      draft, tweak, state, directory = nil, nil, nil, nil
+      draft, tweak, state, directory, engaged = nil, nil, nil, nil, false
       redraw()
     end, { name = "goal-state-" .. event })
   end
