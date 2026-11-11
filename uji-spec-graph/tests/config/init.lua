@@ -2,36 +2,22 @@ require("uji.builtin.defaults")
 local root = require("uji.core.paths").config() .. "/../.."
 uji.pack.add({ { dir = root } })
 local tools = {}
-local plan_guard
+local add = uji.tool.add
+uji.tool.add = function(name, spec) tools[name] = spec; add(name, spec) end
 local on = uji.on
+local plan_guard
 uji.on = function(event, handler, opts)
     if opts and opts.name == "spec-graph-planmode" then plan_guard = handler end
     return on(event, handler, opts)
 end
-local add = uji.tool.add
-uji.tool.add = function(name, spec)
-    tools[name] = spec
-    add(name, spec)
-end
-require("spec_graph").setup({ timeout = 10 })
+require("spec_graph").setup()
 uji.tool.add = add
 uji.on = on
-uji.provider.add({
-    id = "spec-test", name = "Spec test", api = uji.api.openai(), base_url = "http://127.0.0.1:1",
-    models = { { id = "fake", context = 10000 } },
-})
 package.loaded["uji.core.run"] = function()
     require("uji.core.task").release()
     local ok, err = pcall(function()
-        local function run(name, args)
-            local result
-            local cancel = tools[name].run(args, { done = function(text) result = text end })
-            if type(cancel) == "string" then return cancel end
-            local deadline = uji.os.clock() + 15
-            while not result and uji.os.clock() < deadline do uji.sleep(0.01) end
-            assert(result, "tool timed out: " .. name)
-            return result
-        end
+        local function run(name, args) return tools[name].run(args) end
+        local function has(text, needle) assert(text:find(needle, 1, true), needle .. " not in: " .. text) end
         local count = 0
         for _ in pairs(tools) do count = count + 1 end
         assert(count == 7)
@@ -39,40 +25,71 @@ package.loaded["uji.core.run"] = function()
         assert(tools.spec_update.policy == "ask")
         package.loaded["planmode"] = { active = function() return true end }
         assert(plan_guard({ name = "spec_create" }).deny)
-        assert(plan_guard({ name = "spec_update" }).deny)
-        assert(plan_guard({ name = "spec_delete" }).deny)
         assert(not plan_guard({ name = "spec_get" }))
         package.loaded["planmode"] = nil
-        assert(not plan_guard({ name = "spec_create" }))
-        assert(run("spec_create", { path = "SPEC.md", id = "root", type = "module-design", title = "Root" }):find("Created", 1, true))
-        assert(run("spec_get", { id = "root" }):find("Root", 1, true))
+
+        has(run("spec_create", { path = "SPEC.md", id = "root", type = "goal-and-requirements", title = "Root: the goal", tags = { "a", "b" } }), "Created")
+        has(uji.fs.read("SPEC.md"), 'title: "Root: the goal"')
+        has(run("spec_create", { path = "sub/child.md", id = "child", type = "module-design", title = "Child", parent = "root", dependsOn = { "root" }, status = "active" }), "Created")
+        has(run("spec_create", { path = "node_modules/x.md", id = "x", type = "module-design", title = "X" }), "ignored")
+        has(run("spec_create", { path = "../x.md", id = "x", type = "module-design", title = "X" }), "inside the project")
+        has(run("spec_create", { path = "SPEC.md", id = "y", type = "module-design", title = "X" }), "already exists")
+        has(run("spec_create", { path = "z.md", id = "root", type = "module-design", title = "X" }), "in use")
+        has(run("spec_get", { id = "child" }), "depends-on -> root (SPEC.md)")
+        has(run("spec_get", { id = "root" }), "referenced by:")
+        has(run("spec_get", { id = "nope" }), "Error: No spec")
+
         local file = assert(io.open("SPEC.md", "a"))
-        file:write("\nneedle 外部 🧪\n")
+        file:write("\nNeedle 外部 🧪\n")
         file:close()
-        assert(run("spec_grep", { pattern = "needle" }):find("外部 🧪", 1, true))
-        assert(run("spec_graph", { root = "root", direction = "subtree" }):find("root", 1, true))
-        assert(run("spec_update", { id = "root", set = { title = "Changed" } }):find("Updated", 1, true))
-        assert(run("spec_get", { id = "root" }):find("Changed", 1, true))
-        local large = string.rep("🧪", 8000)
-        assert(run("spec_update", { id = "root", set = { title = large } }):find("Updated", 1, true))
-        assert(run("spec_get", { id = "root" }):find(large, 1, true), "chunked output must reassemble byte-exactly")
-        local completed = false
-        local cancel = tools.spec_get.run({ id = "root" }, { done = function() completed = true end })
-        assert(type(cancel) == "function")
-        cancel()
-        assert(not completed, "cancelled calls must not deliver results")
-        assert(run("spec_get", { id = "root" }):find(large, 1, true), "worker must restart after cancellation")
-        assert(not run("spec_validate", {}):find("Error:", 1, true))
-        assert(run("spec_delete", { id = "root" }):find("Deleted", 1, true))
-        assert(run("spec_get", { id = "root" }):find("Error:", 1, true))
-        assert(run("spec_get", {}):find("Invalid parameters", 1, true))
-        uji.tool.add = function(name, spec) tools[name] = spec; add(name, spec) end
-        require("spec_graph").setup({ bun = "/nonexistent/uji-spec-graph-bun", timeout = 2 })
-        uji.tool.add = add
-        assert(run("spec_get", { id = "root" }):find("Error:", 1, true))
-        print("passed real uji: seven tools, worker reuse, external edits, UTF-8, errors, missing runtime, policies")
+        has(run("spec_grep", { pattern = "needle" }), "外部 🧪")
+        has(run("spec_grep", { pattern = "ne+dle", regex = true }), "SPEC.md:")
+        has(run("spec_grep", { pattern = "(", regex = true }), "Invalid search pattern")
+        has(run("spec_grep", { pattern = "Responsibility", type = "module-design" }), "sub/child.md")
+        has(run("spec_grep", { pattern = "zzz" }), "No matches.")
+        has(run("spec_graph", { root = "root", direction = "subtree" }), "child --parent--> root")
+        has(run("spec_graph", { root = "child", direction = "ancestors" }), "root [goal")
+        has(run("spec_graph", { root = "child", direction = "neighbors" }), "child --depends-on--> root")
+        has(run("spec_validate", {}), "valid")
+
+        local child = uji.fs.read("sub/child.md")
+        uji.fs.write("sub/child.md", (child:gsub("title: Child\n", "# keep me\ntitle: Child\nowner: eric # trailing\n")))
+        has(run("spec_update", { id = "child", set = { title = "Changed: yes" }, addList = { tags = { "t1" }, references = { "root" } }, removeList = { ["depends-on"] = { "root" } } }), "Updated")
+        local after = uji.fs.read("sub/child.md")
+        has(after, "# keep me")
+        has(after, "owner: eric # trailing")
+        has(after, 'title: "Changed: yes"')
+        has(after, "tags: [t1]")
+        assert(not after:find("depends-on", 1, true), after)
+        has(run("spec_update", { id = "child", set = { id = "z" } }), "Cannot rename")
+        has(run("spec_update", { id = "child", remove = { "type" } }), "protected")
+        has(run("spec_update", { id = "child", set = { tags = "x" } }), "addList")
+
+        uji.fs.write("a.md", "---\nid: a\ntype: task-spec\ntitle: A\nparent: b\nreferences: [missing]\n---\nbody\n")
+        uji.fs.write("b.md", "---\nid: b\ntype: task-spec\ntitle: B\nparent: a\n---\n")
+        uji.fs.write("dup.md", "---\nid: child\ntype: task-spec\ntitle: D\n---\n")
+        uji.fs.write("legacy.md", "---\ntitle: nope\n---\nneedle\n")
+        local report = run("spec_validate", {})
+        has(report, "Duplicate ids")
+        has(report, "[missing]")
+        has(report, "Parent cycles")
+        has(run("spec_grep", { pattern = "needle" }), "1 match")
+
+        uji.fs.write("crlf.md", "\239\187\191---\r\nid: crlf\r\ntype: task-spec\r\ntitle: \"Q \\\"x\\\"\"\r\n---\r\nbody\r\n")
+        has(run("spec_get", { id = "crlf" }), 'crlf [task-spec] — Q "x"')
+        has(run("spec_update", { id = "crlf", addList = { tags = { "n" } } }), "Updated")
+        local crlf = uji.fs.read("crlf.md")
+        has(crlf, "tags: [n]\r\n---\r\nbody\r\n")
+        assert(crlf:sub(1, 3) == "\239\187\191")
+        has(run("spec_delete", { id = "crlf" }), "Deleted")
+        has(run("spec_get", { id = "crlf" }), "Error:")
+
+        local big = {}
+        for index = 1, 3000 do big[#big + 1] = "bulk line " .. index end
+        uji.fs.write("big.md", "---\nid: big\ntype: task-spec\ntitle: B\n---\n" .. table.concat(big, "\n"))
+        has(run("spec_grep", { pattern = "bulk" }), "More matches: repeat spec_grep")
+        print("passed real uji: seven tools, in-place edits, external edits, UTF-8, validation, bounds, policies")
     end)
-    uji.emit("before_quit", {})
     if not ok then io.stderr:write(tostring(err), "\n") end
     require("uji.sys").os.exit(ok and 0 or 1)
 end

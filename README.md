@@ -56,15 +56,13 @@ or your personal uji configuration.
 ### Runtime dependencies
 
 Pack installation clones source; it does not run dependency installers or builds.
-Bun is required for spec-graph. In the directory returned by
-`tools.path("uji-spec-graph")`, run `bun install --frozen-lockfile` before using
-its tools. The generated `tools.json` manifest is already tracked.
+Spec-graph is pure Lua and needs no installation step.
 
 For PocketBase, install its dependencies and build the server in the directory
 returned by `tools.path("pocketbase-mcp")`, following that project's README.
 Its `build/index.js` is generated and is not shipped in Git. Reinstall dependencies
-or rebuild after updates that require it. Goal and subagents need no separate
-JavaScript dependency installation.
+or rebuild after updates that require it. Goal, subagents and spec-graph need no
+separate JavaScript dependency installation.
 
 ### Local development
 
@@ -88,7 +86,7 @@ Run checks from each project's own directory:
 
 - `uji-subagents`: `python3 tests/check.py`
 - `uji-goal`: `python3 tests/check.py` and `python3 tests/terminal.py`
-- `uji-spec-graph`: `bun run typecheck` and `bun test`
+- `uji-spec-graph`: `python3 tests/check.py`
 - `pocketbase-mcp`: `npm run build` (requires the project's documented build tools, including pnpm)
 
 ## Repository and licensing

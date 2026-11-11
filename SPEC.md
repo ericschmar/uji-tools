@@ -26,7 +26,7 @@ an authorization boundary for the tools themselves.
 
 ## Runtime dependencies
 
-The Git checkout ships Lua source and the spec-graph manifest, not node_modules
-or PocketBase's generated bundle. Users install spec-graph dependencies with Bun
-and build PocketBase using its project instructions. Runtime configuration uses
+The Git checkout ships Lua source, not node_modules or PocketBase's generated
+bundle. Spec-graph is pure Lua; users build PocketBase using its project
+instructions. Runtime configuration uses
 pack-relative resource paths. Credentials remain outside the repository.

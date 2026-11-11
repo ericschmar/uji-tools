@@ -15,36 +15,32 @@ that makes applicable specs authoritative without requiring unrelated reading.
 
 ## Boundary
 
-`core/` owns parsing, the derived read index, graph traversal, and validation.
-`tools/` defines host-neutral schemas and handlers. `bridge.ts` validates requests
-against those schemas and runs them in a persistent Bun process. The Lua module
-registers the tools through `uji.tool.add` and the rule through `uji.context.add`.
-No pi or thinkrail runtime is required.
+The pack is pure Lua running inside uji; it needs no Bun, Node or build step.
+`lua/spec_graph/yaml.lua` reads the YAML subset frontmatter uses. `model.lua`
+owns the is-a-spec rule, in-place frontmatter editing, the derived graph,
+validation, bounded graph slices and content grep, and never touches the
+filesystem. `init.lua` scans the project, formats results, and registers the
+tools through `uji.tool.add` and the rule through `uji.context.add`.
 
-The worker inherits uji's working directory as its spec root. It is started only
-on the first tool call, reused across calls, and stopped on cancellation, timeout,
-setup replacement, or application exit. Every read revalidates the filesystem;
-the in-memory index is never authoritative.
-
-`tools.json` is generated from the tool definitions with `bun run manifest` and
-is checked against them in tests. Chunked JSON-line responses preserve UTF-8 and
-keep individual transport lines bounded. Only formatted text reaches uji; internal
-structured results stay inside the worker. Errors retain a visible `Error:` marker.
+The spec root is the session's working directory. Every call rescans the
+filesystem, so external edits are always seen and no index is authoritative.
 
 ## Invariants
 
 - The filesystem is the source of truth. Specs are Markdown files whose YAML
-  frontmatter carries nonempty `id` and `type` fields.
+  frontmatter carries nonempty `id` and `type` fields. Build and tooling
+  directories (`node_modules`, `.git`, `dist`, `build`, assistant scratch
+  directories) are not indexed and symlinks are never followed.
 - Only create, update, and delete mutate project files. Update edits frontmatter
-  alone, preserving prose, comments, unknown fields, ordering, and line endings.
+  in place, preserving prose, comments, unknown fields, ordering, and line
+  endings; only the fields it changes are rewritten.
 - Read tools default to allow; mutation tools default to ask. The user's uji
-  policy still takes precedence.
-- Large results are bounded to 50 KiB and 2,000 lines; overflow is captured in
-  private temporary files with an explicit notice.
-- Failed or interrupted transport never silently retries a mutation. The user
-  must inspect the file before retrying an uncertain outcome.
+  policy still takes precedence, and plan mode denies mutations.
+- Results are bounded to 50 KiB and 2,000 lines; overflow is saved to a
+  temporary file with an explicit notice. Errors carry an `Error:` marker.
 
 ## Out of scope
 
-A graph viewer, semantic search, spec moves/renames, and migrating existing
-plain Markdown documents to the frontmatter schema.
+A graph viewer, semantic search, spec moves/renames, full YAML (anchors, nested
+maps and multi-document files are not frontmatter), and migrating existing plain
+Markdown documents to the frontmatter schema.

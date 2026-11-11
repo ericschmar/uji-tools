@@ -1,6 +1,6 @@
 # Spec graph for uji
 
-A uji pack adapted from [JetBrains/thinkrail's spec-graph extension](https://github.com/JetBrains/thinkrail/tree/main/packages/spec-graph).
+A pure-Lua uji pack ported from [JetBrains/thinkrail's spec-graph extension](https://github.com/JetBrains/thinkrail/tree/main/packages/spec-graph).
 
 It gives uji seven tools for navigating and maintaining specs, a spec-writing
 skill, and a context rule that keeps applicable specs authoritative. It does not
@@ -8,14 +8,7 @@ require pi or thinkrail and does not add a graph viewer.
 
 ## Install
 
-Requires uji and [Bun](https://bun.sh) on PATH.
-
-In this pack's directory, run:
-
-```sh
-bun install --frozen-lockfile
-bun run manifest
-```
+Requires only uji. There is nothing to build or install.
 
 Add the directory to your existing pack list in `~/.config/uji/init.lua`:
 
@@ -37,19 +30,7 @@ require("spec_graph").setup({})
 Run `/reload`. The skill is discoverable through the skills plugin, including
 `/skill:spec-graph`. The graph tools are model tools, not slash commands.
 
-Optional setup settings:
-
-```lua
-require("spec_graph").setup({
-    bun = "/absolute/path/to/bun",
-    timeout = 60,
-})
-```
-
-`timeout` is the per-call deadline in seconds. The Bun worker starts lazily on
-the first tool call and stays alive to reuse the index. Interrupting a call,
-reconfiguring the module, a timeout, or quitting stops it. A later call starts a
-fresh worker. It never automatically retries a mutation after an uncertain failure.
+The tools read the filesystem on every call and keep no worker process.
 
 ## Tools
 
@@ -112,16 +93,11 @@ and every byte of the body. Prose changes use uji's normal file tools.
 ## Development
 
 ```sh
-bun run manifest
-bun run typecheck
-bun test
+python3 tests/check.py
 ```
 
-Tests include the upstream graph/tool suite, output-boundary regressions, a
-manifest consistency check, and a model-free real-uji integration test. The
-integration test requires `uji` on PATH; it does not contact a model provider.
-It checks all seven handlers, approval defaults, the plan-mode guard, external
-edits, chunked UTF-8 output, cancellation/restart, and a missing Bun executable.
-It does not simulate an interactive approval dialog or a model's tool selection.
+The test runs in real uji with no model call. It checks all seven tools, approval
+defaults, the plan-mode guard, in-place frontmatter edits, external edits, CRLF
+and BOM files, UTF-8, validation findings and output bounds.
 
 See [UPSTREAM.md](UPSTREAM.md) for attribution and [LICENSE](LICENSE) for licensing.
