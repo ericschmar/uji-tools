@@ -127,7 +127,7 @@ function M.update(goal, updates, authorized_tweak)
     end
     if updates.tasks ~= nil then
       if copy.status ~= "active" then return false, "tasks can only be updated on an active goal" end
-      local tasks, err = normalize_tasks(updates.tasks)
+      local tasks, err = normalize_tasks(updates.tasks, DEFAULT_MAX_DEPTH)
       if not tasks then return false, err end
       local function reset(tree)
         for _, task in ipairs(tree) do
